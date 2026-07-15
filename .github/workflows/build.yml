@@ -4,38 +4,41 @@ on:
   workflow_dispatch:
     inputs:
       frida_version:
-        description: 'Frida version (e.g. 17.7.2)'
+        description: "Frida version"
         required: true
-        default: '17.7.2'
+        default: "17.7.2"
+
       custom_name:
-        description: 'Custom name (replaces "frida" everywhere)'
+        description: "Custom name"
         required: true
-        default: 'ajeossida'
+        default: "cioflex"
+
       arch:
-        description: 'Target architecture(s)'
+        description: "Target architecture"
         required: true
-        default: 'android-arm64'
         type: choice
+        default: "android-x86_64"
         options:
-          - android-arm64
           - android-x86_64
+          - android-arm64
           - android-arm
-          - android-arm64,android-arm
-          - android-arm64,android-arm,android-x86_64,android-x86
+
       port:
-        description: 'Custom port (empty = keep 27042)'
+        description: "Custom port"
         required: false
-        default: ''
+        default: "31699"
+
       extended:
-        description: 'Extended anti-detection (D-Bus, symbols, binary sweep)'
-        required: false
-        type: boolean
-        default: true
-      temp_fixes:
-        description: 'Stability fixes (perfetto skip, cloak detach)'
+        description: "Extended anti-detection"
         required: false
         type: boolean
         default: false
+
+      temp_fixes:
+        description: "Stability fixes"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -59,23 +62,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential curl git python3 unzip
 
-      # Cache NDK (~1.5 GB) — saves ~3 min on subsequent runs
-      - name: Cache NDK
+      - name: Cache NDK r25c
         uses: actions/cache@v4
         id: ndk-cache
         with:
-          path: build/android-ndk-r29
-          key: ndk-r29-linux
+          path: build/android-ndk-r25c
+          key: ndk-r25c-linux
 
-      - name: Download NDK
+      - name: Download NDK r25c
         if: steps.ndk-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p build
-          curl -L -o build/android-ndk-r29-linux.zip \
-            https://dl.google.com/android/repository/android-ndk-r29-linux.zip
-          cd build && unzip -q android-ndk-r29-linux.zip && rm android-ndk-r29-linux.zip
+          curl -L -o build/android-ndk-r25c-linux.zip \
+            https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          cd build
+          unzip -q android-ndk-r25c-linux.zip
+          rm android-ndk-r25c-linux.zip
 
-      # Cache Frida source tree — saves ~5 min clone time
       - name: Cache Frida source
         uses: actions/cache@v4
         id: frida-cache
@@ -86,14 +89,14 @@ jobs:
       - name: Clone Frida
         if: steps.frida-cache.outputs.cache-hit != 'true'
         run: |
-          git clone --recurse-submodules --branch ${{ inputs.frida_version }} --depth 1 \
+          git clone --recurse-submodules \
+            --branch ${{ inputs.frida_version }} \
+            --depth 1 \
             https://github.com/frida/frida.git build/frida
 
-      # If cache hit, we need a fresh copy (patches are destructive)
-      - name: Prepare fresh source from cache
+      - name: Prepare fresh source
         if: steps.frida-cache.outputs.cache-hit == 'true'
         run: |
-          # Restore to clean state (including build dir — patches are destructive)
           cd build/frida
           git checkout -- .
           git submodule foreach --recursive 'git checkout -- . || true'
@@ -106,7 +109,8 @@ jobs:
           CMD="python3 build.py --version ${{ inputs.frida_version }}"
           CMD="$CMD --name ${{ inputs.custom_name }}"
           CMD="$CMD --arch ${{ inputs.arch }}"
-          CMD="$CMD --skip-clone --ndk-path build/android-ndk-r29"
+          CMD="$CMD --skip-clone"
+          CMD="$CMD --ndk-path build/android-ndk-r25c"
           CMD="$CMD --verify"
 
           if [ -n "${{ inputs.port }}" ]; then
@@ -121,7 +125,7 @@ jobs:
             CMD="$CMD --temp-fixes"
           fi
 
-          echo "cmd=$CMD" >> $GITHUB_OUTPUT
+          echo "cmd=$CMD" >> "$GITHUB_OUTPUT"
           echo "Will run: $CMD"
 
       - name: Apply patches and build
@@ -131,14 +135,6 @@ jobs:
         run: |
           echo "=== Build artifacts ==="
           ls -lh output/
-          echo ""
-          echo "=== Binary verification ==="
-          for f in output/*; do
-            if [[ ! "$f" == *.gz ]]; then
-              count=$(strings "$f" | grep -c "frida" || true)
-              echo "$f: $count residual 'frida' strings"
-            fi
-          done
 
       - name: Upload server artifacts
         uses: actions/upload-artifact@v4
@@ -146,7 +142,6 @@ jobs:
           name: ${{ inputs.custom_name }}-server-${{ inputs.frida_version }}
           path: output/${{ inputs.custom_name }}-server-*.gz
           retention-days: 30
-          if-no-files-found: warn
 
       - name: Upload gadget artifacts
         uses: actions/upload-artifact@v4
